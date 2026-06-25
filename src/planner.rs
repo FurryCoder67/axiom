@@ -322,7 +322,8 @@ pub fn encode_plan(plan: &Plan, goal: &str, history: &[TaskRecord]) -> Vec<f64> 
             .join(" ")
     )
     .to_lowercase();
-    let goal_words: Vec<&str> = goal.to_lowercase().split_whitespace().collect();
+    let goal_lower = goal.to_lowercase();
+    let goal_words: Vec<&str> = goal_lower.split_whitespace().collect();
     let mut overlap = 0.0;
     for word in &goal_words {
         if word.len() > 2 && plan_text.contains(word) {
