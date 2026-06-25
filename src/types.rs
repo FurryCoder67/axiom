@@ -39,6 +39,15 @@ impl Action {
 pub struct Plan {
     pub description: String,
     pub actions: Vec<Action>,
+    /// How well this plan matches the goal's intent (0–1). Set by the planner;
+    /// blended with the net's prediction at selection time so the goal-appropriate
+    /// plan isn't buried by near-ties in the net's output.
+    #[serde(default = "default_relevance")]
+    pub relevance: f64,
+}
+
+fn default_relevance() -> f64 {
+    0.5
 }
 
 impl Plan {
@@ -46,6 +55,7 @@ impl Plan {
         Plan {
             description: description.to_string(),
             actions,
+            relevance: default_relevance(),
         }
     }
 

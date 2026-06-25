@@ -261,29 +261,40 @@ impl Axiom {
             return;
         }
 
-        // 2. Score each plan with the neural net
-        let mut scored: Vec<(Plan, Vec<f64>, f64)> = plans
+        // 2. Score each plan with the neural net, then blend the net's success
+        //    prediction with the plan's goal-relevance so the intent-matched plan
+        //    isn't buried when the net's outputs are near-tied. Tuple fields:
+        //    (plan, features, net_score, combined).
+        let mut scored: Vec<(Plan, Vec<f64>, f64, f64)> = plans
             .iter()
             .map(|plan| {
                 let features = planner::encode_plan(plan, goal, &self.history);
-                let score = self.net.predict(&features);
-                (plan.clone(), features, score)
+                let net_score = self.net.predict(&features);
+                let combined = 0.5 * plan.relevance + 0.5 * net_score;
+                (plan.clone(), features, net_score, combined)
             })
             .collect();
 
-        // 3. Sort by score descending
-        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        // 3. Sort by the combined score descending
+        scored.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
 
         // 4. Display plans with scores
         println!("  {}Candidate Plans:{}", bold(""), RESET);
-        for (i, (plan, _, score)) in scored.iter().enumerate() {
+        for (i, (plan, _, net_score, combined)) in scored.iter().enumerate() {
             let marker = if i == 0 { "▶" } else { " " };
             let label_color = if i == 0 { yellow("") } else { dim("") };
             println!(
                 "    {} {}Plan {}{}: {}",
                 marker, label_color, i + 1, RESET, plan.description
             );
-            println!("      {}", score_bar(*score));
+            println!(
+                "      {}  {}rel {:.2} → pick {:.2}{}",
+                score_bar(*net_score),
+                dim(""),
+                plan.relevance,
+                combined,
+                RESET
+            );
             for (j, action) in plan.actions.iter().enumerate() {
                 println!(
                     "        {}. {}{}{} — {}",
@@ -297,8 +308,8 @@ impl Axiom {
         }
         println!();
 
-        // 5. Execute the highest-scoring plan
-        let (best_plan, best_features, best_score) = &scored[0];
+        // 5. Execute the highest-ranked plan
+        let (best_plan, best_features, best_score, _best_combined) = &scored[0];
 
         // Safety check
         let blocked = safety::check_plan(best_plan, &self.config.safety.blocklist);

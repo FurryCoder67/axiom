@@ -74,10 +74,10 @@ pub fn generate_plans(goal: &str, candidate_count: usize) -> Vec<Plan> {
         plans.push(Plan::new(
             "Count files in directory",
             vec![Action::new(
-                "ls",
-                vec!["-1"],
-                "List files one per line for counting",
-                ActionType::Read,
+                "sh",
+                vec!["-c", "ls -1A | wc -l"],
+                "Count entries in the current directory",
+                ActionType::Execute,
             )],
         ));
     } else if wants_disk {
@@ -181,7 +181,17 @@ pub fn generate_plans(goal: &str, candidate_count: usize) -> Vec<Plan> {
     ));
 
     // ── Plan 4: Alternative approach (different commands) ──
-    if wants_list || wants_count {
+    if wants_count {
+        plans.push(Plan::new(
+            "Alternative: count via find",
+            vec![Action::new(
+                "sh",
+                vec!["-c", "find . -maxdepth 1 -mindepth 1 | wc -l"],
+                "Count files using find",
+                ActionType::Execute,
+            )],
+        ));
+    } else if wants_list {
         plans.push(Plan::new(
             "Alternative: use find to list files",
             vec![Action::new(
@@ -221,6 +231,15 @@ pub fn generate_plans(goal: &str, candidate_count: usize) -> Vec<Plan> {
                 Action::new("date", vec![], "Show current date", ActionType::Read),
             ],
         ));
+    }
+
+    // Tag each plan with a goal-relevance weight by slot. Plans are generated in a
+    // fixed semantic order: 0 = direct/intent-matched, 1 = recon-then-act,
+    // 2 = thorough exploration, 3 = alternative tool. The direct plan most closely
+    // matches the goal's intent, so it gets the highest relevance.
+    const RELEVANCE_BY_SLOT: [f64; 4] = [1.0, 0.7, 0.5, 0.65];
+    for (i, plan) in plans.iter_mut().enumerate() {
+        plan.relevance = RELEVANCE_BY_SLOT.get(i).copied().unwrap_or(0.5);
     }
 
     // Trim or pad to candidate_count
