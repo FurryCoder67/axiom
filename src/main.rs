@@ -1,5 +1,6 @@
 mod neural_net;
 mod planner;
+mod responder;
 mod safety;
 mod storage;
 mod terminal;
@@ -168,6 +169,7 @@ impl Axiom {
     fn show_help(&self) {
         println!("  {}Commands:{}", bold(""), RESET);
         println!("    {}<any text>{}       — give Axiom a goal to plan and execute", dim(""), RESET);
+        println!("    {}hi / questions{}   — chat or ask (e.g. 'who are you', 'what can you do')", dim(""), RESET);
         println!("    {}status{}           — show current goal and net state", dim(""), RESET);
         println!("    {}interrupt{}        — halt the current task", dim(""), RESET);
         println!("    {}redirect <goal>{} — abandon current task, pivot to a new goal", dim(""), RESET);
@@ -251,8 +253,12 @@ impl Axiom {
 
         println!("\n  {}Goal: {}{}\n", bold(""), yellow(goal), RESET);
 
-        // 1. Generate candidate plans
-        let plans = planner::generate_plans(goal, self.config.agent.plan_candidate_count);
+        // 1. Conversational input gets a direct answer; task goals get planned.
+        let plans = if let Some(answer) = responder::respond(goal) {
+            vec![answer]
+        } else {
+            planner::generate_plans(goal, self.config.agent.plan_candidate_count)
+        };
 
         if plans.is_empty() {
             println!("{}", red("  No plans could be generated for this goal."));
@@ -366,6 +372,13 @@ impl Axiom {
             if self.interrupt_flag {
                 println!("  {}Interrupted at step {}.{}", red(""), i + 1, RESET);
                 return (false, i);
+            }
+
+            // A spoken answer: print the text, never spawn a process.
+            if action.action_type == types::ActionType::Answer {
+                println!();
+                println!("  {} {}", bold("Axiom:"), action.command);
+                continue;
             }
 
             println!(

@@ -1,8 +1,12 @@
-use crate::types::{Action, Plan};
+use crate::types::{Action, ActionType, Plan};
 
 /// Check a single action against the blocklist.
 /// Returns Some(reason) if blocked, None if safe.
 pub fn check_action(action: &Action, blocklist: &[String]) -> Option<String> {
+    // Spoken answers are never executed, so there is nothing to block.
+    if action.action_type == ActionType::Answer {
+        return None;
+    }
     let full_cmd = action.full_command().to_lowercase();
     for pattern in blocklist {
         let p = pattern.to_lowercase();

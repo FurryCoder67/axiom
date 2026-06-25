@@ -320,6 +320,8 @@ pub fn encode_plan(plan: &Plan, goal: &str, history: &[TaskRecord]) -> Vec<f64> 
             ActionType::Write => writes += 1.0,
             ActionType::Execute => executes += 1.0,
             ActionType::Network => networks += 1.0,
+            // A spoken answer is informational and risk-free; treat like a read.
+            ActionType::Answer => reads += 1.0,
         }
     }
     features[1] = reads / total;

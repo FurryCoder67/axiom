@@ -6,6 +6,8 @@ pub enum ActionType {
     Write,
     Execute,
     Network,
+    /// A spoken response — printed directly, never executed as a process.
+    Answer,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
