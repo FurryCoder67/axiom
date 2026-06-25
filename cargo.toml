@@ -1,0 +1,18 @@
+[package]
+name = "axiom"
+version = "0.1.0"
+edition = "2021"
+description = "A terminal AI agent with a from-scratch neural net reward model"
+
+[[bin]]
+name = "axiom"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
