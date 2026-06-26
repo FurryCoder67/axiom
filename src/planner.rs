@@ -259,35 +259,93 @@ pub fn generate_plans(goal: &str, candidate_count: usize) -> Vec<Plan> {
     plans
 }
 
-/// Naive target extraction: looks for a word after common prepositions.
+/// Extract the target word from a goal (a search pattern, filename, etc.).
+///
+/// Strategy: scan for an *anchor* word and return the first meaningful word after
+/// it. Prepositions/specifiers ("for", "named", "called", "file") are preferred
+/// anchors and tried first, so "search for fn" yields "fn" rather than "for".
+/// Action verbs ("create", "find", ...) are only used as anchors if no specifier
+/// is present, e.g. "create notes.txt". Stopwords and other anchor/keyword words
+/// are skipped when choosing the target.
 fn extract_target(goal: &str) -> Option<String> {
     let words: Vec<&str> = goal.split_whitespace().collect();
-    for (i, word) in words.iter().enumerate() {
-        let w = word.to_lowercase();
-        if (w == "for"
-            || w == "named"
-            || w == "called"
-            || w == "file"
-            || w == "create"
-            || w == "find"
-            || w == "called"
-            || w == "remove"
-            || w == "delete"
-            || w == "search")
-            && i + 1 < words.len()
-        {
-            return Some(
-                words[i + 1]
-                    .trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '_' && c != '-')
-                    .to_string(),
-            );
-        }
-    }
-    // Fallback: last word
-    words.last().map(|w| {
+
+    let clean = |w: &str| -> String {
         w.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '_' && c != '-')
             .to_string()
+    };
+
+    // Words that should never be returned as the target.
+    let is_stopword = |w: &str| {
+        matches!(
+            w,
+            "a" | "an" | "the" | "this" | "that" | "to" | "in" | "of" | "all" | "any" | "me"
+        )
+    };
+    let specifiers = ["for", "named", "called", "file", "pattern"];
+    let verbs = ["create", "make", "new", "touch", "find", "search", "grep", "remove", "delete"];
+
+    // Given an anchor index, return the first meaningful word after it.
+    let target_after = |start: usize| -> Option<String> {
+        words.iter().skip(start + 1).find_map(|w| {
+            let lw = w.to_lowercase();
+            if specifiers.contains(&lw.as_str())
+                || verbs.contains(&lw.as_str())
+                || is_stopword(&lw)
+            {
+                None
+            } else {
+                let c = clean(w);
+                if c.is_empty() { None } else { Some(c) }
+            }
+        })
+    };
+
+    // Pass 1: prefer a specifier anchor ("... for X", "... named X").
+    for (i, word) in words.iter().enumerate() {
+        if specifiers.contains(&word.to_lowercase().as_str()) {
+            if let Some(t) = target_after(i) {
+                return Some(t);
+            }
+        }
+    }
+    // Pass 2: fall back to a verb anchor ("create X", "find X").
+    for (i, word) in words.iter().enumerate() {
+        if verbs.contains(&word.to_lowercase().as_str()) {
+            if let Some(t) = target_after(i) {
+                return Some(t);
+            }
+        }
+    }
+    // Fallback: last meaningful word.
+    words.iter().rev().find_map(|w| {
+        let c = clean(w);
+        if c.is_empty() || is_stopword(&c.to_lowercase()) {
+            None
+        } else {
+            Some(c)
+        }
     })
+}
+
+/// The plan's first command — its "signature" for per-command history lookups.
+pub fn primary_command(plan: &Plan) -> String {
+    plan.actions
+        .first()
+        .map(|a| a.command.clone())
+        .unwrap_or_default()
+}
+
+/// Mean outcome over the history records matching `pred`, or a neutral 0.5 prior
+/// when nothing matches. This is the outcome-predictive signal: it lets the net
+/// learn from what actually happened the last time a similar action was run.
+fn historical_rate<F: Fn(&TaskRecord) -> bool>(history: &[TaskRecord], pred: F) -> f64 {
+    let matches: Vec<&TaskRecord> = history.iter().filter(|r| pred(r)).collect();
+    if matches.is_empty() {
+        0.5
+    } else {
+        matches.iter().map(|r| r.actual_outcome).sum::<f64>() / matches.len() as f64
+    }
 }
 
 /// Encode a candidate plan as a fixed-length feature vector for the neural net.
@@ -297,19 +355,24 @@ fn extract_target(goal: &str) -> Option<String> {
 ///   1: proportion of Read actions
 ///   2: proportion of Write actions
 ///   3: proportion of Execute actions
-///   4: proportion of Network actions
-///   5: risk level (weighted by action types)
-///   6: goal keyword overlap with plan text
-///   7: historical success rate for similar plans
+///   4: risk level (weighted by action types)
+///   5: goal keyword overlap with plan text
+///   6: historical success rate for the plan's primary command
+///   7: historical success rate for this exact goal
+///
+/// Features 6 and 7 carry the outcome signal: identical-looking plans (e.g. a
+/// search that matches vs one that doesn't) only become separable once their
+/// past outcomes differ, so the net learns from experience rather than guessing
+/// the base rate for every read-only plan.
 pub fn encode_plan(plan: &Plan, goal: &str, history: &[TaskRecord]) -> Vec<f64> {
     let mut features = vec![0.0; FEATURE_SIZE];
 
-    let total = plan.actions.len() as f64;
+    let total = (plan.actions.len() as f64).max(1.0);
 
     // 0: Plan length
-    features[0] = total / 10.0;
+    features[0] = plan.actions.len() as f64 / 10.0;
 
-    // 1-4: Command type proportions
+    // 1-3: Command type proportions
     let mut reads = 0.0;
     let mut writes = 0.0;
     let mut executes = 0.0;
@@ -327,12 +390,11 @@ pub fn encode_plan(plan: &Plan, goal: &str, history: &[TaskRecord]) -> Vec<f64> 
     features[1] = reads / total;
     features[2] = writes / total;
     features[3] = executes / total;
-    features[4] = networks / total;
 
-    // 5: Risk level (writes and executes are riskier)
-    features[5] = (writes * 0.5 + executes * 0.7 + networks * 0.3) / total;
+    // 4: Risk level (writes and executes are riskier)
+    features[4] = (writes * 0.5 + executes * 0.7 + networks * 0.3) / total;
 
-    // 6: Goal keyword overlap
+    // 5: Goal keyword overlap
     let plan_text = format!(
         "{} {}",
         plan.description,
@@ -351,23 +413,14 @@ pub fn encode_plan(plan: &Plan, goal: &str, history: &[TaskRecord]) -> Vec<f64> 
             overlap += 1.0;
         }
     }
-    features[6] = overlap / goal_words.len().max(1) as f64;
+    features[5] = overlap / goal_words.len().max(1) as f64;
 
-    // 7: Historical success rate for similar plans
-    if history.is_empty() {
-        features[7] = 0.5; // neutral prior
-    } else {
-        let similar: Vec<&TaskRecord> = history
-            .iter()
-            .filter(|r| (r.step_count as i32 - plan.step_count() as i32).abs() <= 2)
-            .collect();
-        if similar.is_empty() {
-            features[7] = 0.5;
-        } else {
-            let successes: f64 = similar.iter().map(|r| r.actual_outcome).sum();
-            features[7] = successes / similar.len() as f64;
-        }
-    }
+    // 6: Historical success rate for this plan's primary command
+    let prim = primary_command(plan);
+    features[6] = historical_rate(history, |r| r.primary_command == prim);
+
+    // 7: Historical success rate for this exact goal
+    features[7] = historical_rate(history, |r| r.goal.to_lowercase() == goal_lower);
 
     features
 }

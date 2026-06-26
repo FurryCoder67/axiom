@@ -76,4 +76,9 @@ pub struct TaskRecord {
     pub actual_outcome: f64,
     pub steps_completed: usize,
     pub timestamp: String,
+    /// The plan's first command (e.g. "grep", "ls"). Lets the encoder compute a
+    /// per-command historical success rate. Defaulted for records written before
+    /// this field existed.
+    #[serde(default)]
+    pub primary_command: String,
 }

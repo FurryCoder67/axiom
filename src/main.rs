@@ -348,6 +348,7 @@ impl Axiom {
             actual_outcome: outcome,
             steps_completed,
             timestamp: current_timestamp(),
+            primary_command: planner::primary_command(best_plan),
         };
         self.history.push(record);
 
