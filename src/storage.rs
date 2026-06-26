@@ -1,4 +1,5 @@
 use crate::neural_net::NeuralNet;
+use crate::responder::Conversation;
 use crate::types::TaskRecord;
 use crate::Config;
 use std::path::PathBuf;
@@ -54,6 +55,25 @@ pub fn save_history(history: &[TaskRecord], config: &Config) {
         }
     }
     let _ = std::fs::write(&path, content);
+}
+
+/// Save conversation memory (remembered name, turn count) as JSON.
+pub fn save_conversation(convo: &Conversation, config: &Config) {
+    let dir = ensure_data_dir(config);
+    let path = dir.join("conversation.json");
+    if let Ok(json) = serde_json::to_string_pretty(convo) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Load conversation memory, or a fresh default if absent/invalid.
+pub fn load_conversation(config: &Config) -> Conversation {
+    let dir = data_dir_path(config);
+    let path = dir.join("conversation.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_default()
 }
 
 /// Load task history from JSONL.

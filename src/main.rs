@@ -78,6 +78,7 @@ struct Axiom {
     config: Config,
     net: NeuralNet,
     history: Vec<TaskRecord>,
+    conversation: responder::Conversation,
     interrupt_flag: bool,
     current_goal: Option<String>,
 }
@@ -91,11 +92,13 @@ impl Axiom {
         });
 
         let history = storage::load_history(&config);
+        let conversation = storage::load_conversation(&config);
 
         Axiom {
             config,
             net,
             history,
+            conversation,
             interrupt_flag: false,
             current_goal: None,
         }
@@ -142,6 +145,7 @@ impl Axiom {
                 println!("{}Saving state and exiting...{}", dim(""), RESET);
                 storage::save_weights(&self.net, &self.config);
                 storage::save_history(&self.history, &self.config);
+                storage::save_conversation(&self.conversation, &self.config);
                 break;
             }
 
@@ -156,11 +160,13 @@ impl Axiom {
                     self.redirect(goal);
                     storage::save_weights(&self.net, &self.config);
                     storage::save_history(&self.history, &self.config);
+                    storage::save_conversation(&self.conversation, &self.config);
                 }
                 goal => {
                     self.handle_goal(goal);
                     storage::save_weights(&self.net, &self.config);
                     storage::save_history(&self.history, &self.config);
+                    storage::save_conversation(&self.conversation, &self.config);
                 }
             }
         }
@@ -185,6 +191,9 @@ impl Axiom {
         match &self.current_goal {
             Some(goal) => println!("    Current goal: {}", yellow(goal)),
             None => println!("    No active goal"),
+        }
+        if let Some(name) = &self.conversation.user_name {
+            println!("    Talking to: {} ({} chat turns)", yellow(name), self.conversation.turns);
         }
         println!("    Tasks completed: {}", self.history.len());
         println!("    Net architecture: {}", format_layer_sizes(&self.net));
@@ -254,7 +263,7 @@ impl Axiom {
         println!("\n  {}Goal: {}{}\n", bold(""), yellow(goal), RESET);
 
         // 1. Conversational input gets a direct answer; task goals get planned.
-        let plans = if let Some(answer) = responder::respond(goal) {
+        let plans = if let Some(answer) = responder::respond(goal, &mut self.conversation) {
             vec![answer]
         } else {
             planner::generate_plans(goal, self.config.agent.plan_candidate_count)
